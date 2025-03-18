@@ -15,15 +15,21 @@ accept a suggestion, or keep typing to refine the suggestions. To ask questions
 about your codebase or request specific changes, use the `:Augment chat` command
 to start a chat conversation.
 
-## Installation
+## Getting Started
 
-1. Both Vim and Neovim are supported, but the plugin may require a newer version
-   than what's installed on your system by default.
+1. Sign up for a free trial of Augment at
+   [augmentcode.com](https://augmentcode.com).
 
-   - [Vim](https://github.com/vim/vim?tab=readme-ov-file#installation) version 9.1.0 or newer.
+1. Ensure you have a compatible editor version installed. Both Vim and Neovim
+   are supported, but the plugin may require a newer version than what is
+   installed on your system by default.
 
-   - [Neovim](https://github.com/neovim/neovim/tree/master?tab=readme-ov-file#install-from-package), version
-     0.10.0 or newer.
+   - For [Vim](https://github.com/vim/vim?tab=readme-ov-file#installation),
+     version 9.1.0 or newer.
+
+   - For
+     [Neovim](https://github.com/neovim/neovim/tree/master?tab=readme-ov-file#install-from-package),
+     version 0.10.0 or newer.
 
 1. Install [Node.js](https://nodejs.org/en/download/package-manager/all),
    version 22.0.0 or newer, which is a required dependency.
@@ -71,8 +77,6 @@ The following commands are provided:
 :Augment status        " View the current status of the plugin
 :Augment signin        " Start the sign in flow
 :Augment signout       " Sign out of Augment
-:Augment enable        " Globally enable suggestions (on by default)
-:Augment disable       " Globally disable suggestions
 :Augment log           " View the plugin log
 :Augment chat          " Send a chat message to Augment AI
 :Augment chat-new      " Start a new chat conversation
@@ -166,6 +170,10 @@ inoremap <cr> <cmd>call augment#Accept("\n")<cr>
 
 The default tab mapping can be disabled by setting
 `g:augment_disable_tab_mapping = v:true` before the plugin is loaded.
+
+Completions can be disabled entirely by setting
+`g:augment_disable_completions = v:true` in your vimrc or at any time during
+editing.
 
 If another plugin uses tab in insert mode, the Augment tab mapping may be
 overridden depending on the order in which the plugins are loaded. If tab isn't

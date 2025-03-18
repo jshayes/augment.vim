@@ -73,8 +73,8 @@ function! s:RequestCompletion() abort
         return
     endif
 
-    " Don't send a request if disabled
-    if exists('g:augment_enabled') && !g:augment_enabled
+    " Don't send a request if completions are disabled
+    if exists('g:augment_disable_completions') && g:augment_disable_completions
         return
     endif
 
@@ -85,7 +85,16 @@ function! s:RequestCompletion() abort
     endif
     let b:_augment_comp_tick = b:changedtick
 
-    let uri = 'file://' . expand('%:p')
+    if has('nvim')
+        " NOTE(mpauly): On neovim, we use the built-in lsp client which
+        " requires the uri to be in the format defined by
+        " vim.uri_from_fname(). There isn't a straightforward way to format
+        " the uri on vim and it isn't causing any issues, so punting on it for
+        " now.
+        let uri = v:lua.vim.uri_from_fname(expand('%:p'))
+    else
+        let uri = 'file://' . expand('%:p')
+    endif
     let text = join(getline(1, '$'), "\n")
     " TODO: remove version-- we use it elsewhere but it's not in the spec
     call augment#client#Client().Request('textDocument/completion', {
@@ -129,15 +138,21 @@ function! s:CommandSignOut(...) abort
     call augment#client#Client().Request('augment/logout', {})
 endfunction
 
+" NOTE: The enable/disable commands are deprecated
 function! s:CommandEnable(...) abort
-    let g:augment_enabled = v:true
+    call augment#DisplayError('The `Enable` and `Disable` commands are deprecated in favor of the `g:augment_disable_completions` option. See `:help g:augment_disable_completions` for more details.')
 endfunction
 
 function! s:CommandDisable(...) abort
-    let g:augment_enabled = v:false
+    call augment#DisplayError('The `Enable` and `Disable` commands are deprecated in favor of the `g:augment_disable_completions` option. See `:help g:augment_disable_completions` for more details.')
 endfunction
 
 function! s:CommandStatus(...) abort
+    if !exists('g:augment_initialized') || !g:augment_initialized
+        call augment#DisplayError('The Augment plugin failed to initialize. See ":Augment log" for more details.')
+        return
+    endif
+
     if !s:IsRunning()
         echohl WarningMsg
         echo s:NOT_RUNNING_MSG
@@ -149,13 +164,6 @@ function! s:CommandStatus(...) abort
 endfunction
 
 function! s:CommandChat(range, args) abort
-    if exists('g:augment_enabled') && !g:augment_enabled
-        echohl WarningMsg
-        echo 'Augment: Not enabled. Run ":Augment enable" to enable the plugin.'
-        echohl None
-        return
-    endif
-
     if !s:IsRunning()
         echohl WarningMsg
         echo s:NOT_RUNNING_MSG
@@ -244,7 +252,14 @@ function! augment#Command(range, args) abort range
         return
     endif
 
+    " If the plugin failed to initialize, only allow status and log commands
     let command = split(a:args)[0]
+    if (!exists('g:augment_initialized') || !g:augment_initialized)
+                \ && command !=# 'status' && command !=# 'log'
+        call augment#DisplayError('The Augment plugin failed to initialize. Only `:Augment status` and `:Augment log` commands are available.')
+        return
+    endif
+
     for [name, Handler] in items(s:command_handlers)
         " Note that ==? is case-insensitive comparison
         if command ==? name
@@ -308,4 +323,23 @@ function! augment#Accept(...) abort
     if !augment#suggestion#Accept()
         call feedkeys(fallback, 'nt')
     endif
+endfunction
+
+" Display an error message to the user in addition to logging it
+function! augment#DisplayError(message) abort
+    " If we have already entered the editor, display the error message
+    " immediately. Otherwise, wait for VimEnter.
+    if v:vim_did_enter
+        echohl ErrorMsg | echom 'Augment: ' . a:message | echohl None
+    else
+        " Shadow the message argument with a script-local variable. This means
+        " that subsequent calls will override the previous message, which
+        " should be fine for our use case.
+        let s:error_message = a:message
+        augroup augment_error
+            autocmd!
+            autocmd VimEnter * echohl ErrorMsg | echom 'Augment: ' . s:error_message | echohl None
+        augroup END
+    endif
+    call augment#log#Error(a:message)
 endfunction

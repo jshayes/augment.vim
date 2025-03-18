@@ -3,13 +3,18 @@
 
 " Client for interacting with the server process
 
+" Custom LSP response error codes
+let s:AUGMENT_ERROR_UNAUTHORIZED = 401
+
 let s:client = {}
 
-" If provided, launch the server from a user-provided command
-if exists('g:augment_job_command')
-    let s:job_command = g:augment_job_command
-else
-    let server_file = expand('<sfile>:h:h:h') . '/dist/server.js'
+function! augment#client#GetJobCommand() abort
+    " If provided, launch the server from a user-provided command
+    if exists('g:augment_job_command')
+        return g:augment_job_command
+    endif
+
+    let server_file = expand('<script>:h:h:h') . '/dist/server.js'
 
     " If provided, use a user-provided node command
     if exists('g:augment_node_command')
@@ -17,9 +22,8 @@ else
     else
         let s:node_command = 'node'
     endif
-
-    let s:job_command = [s:node_command, server_file, '--stdio']
-endif
+    return [s:node_command, server_file, '--stdio']
+endfunction
 
 function! s:VimNotify(method, params) dict abort
     let message = {
@@ -55,10 +59,25 @@ function! s:NvimRequest(method, params) dict abort
     " For nvim tracking the request methods and params is handled in the lua code
 endfunction
 
-" Handle a chat chunk notification
+" Handle the augment/chatChunk notification
 function! s:HandleChatChunk(client, params) abort
     let text = a:params.text
     call augment#chat#AppendText(text)
+endfunction
+
+" Handle the window/logMessage notification
+function! s:HandleLogMessage(client, params) abort
+    if a:params.type == 1  " Error
+        call augment#log#Error(a:params.message)
+    elseif a:params.type == 2  " Warning
+        call augment#log#Warn(a:params.message)
+    elseif a:params.type == 3 || a:params.type == 4  " Info, Log
+        call augment#log#Info(a:params.message)
+    elseif a:params.type == 5  " Debug
+        call augment#log#Debug(a:params.message)
+    else
+        call augment#log#Warn('Unknown log message type: ' . string(a:params.type) . '. Message: ' . string(a:params.message))
+    endif
 endfunction
 
 " Handle the initialize response
@@ -74,6 +93,11 @@ endfunction
 " Handle the textDocument/completion response
 function! s:HandleCompletion(client, params, result, err) abort
     if a:err isnot v:null
+        " If the user is not logged in, ignore the error
+        if a:err.code == s:AUGMENT_ERROR_UNAUTHORIZED
+            return
+        endif
+
         call augment#log#Error('Recieved error ' . string(a:err) . ' for completion with params: ' . string(a:params))
         return
     endif
@@ -130,7 +154,7 @@ endfunction
 function! s:HandleToken(client, params, result, err) abort
     if a:err isnot v:null
         echohl ErrorMsg
-        echom 'Augment: Error signing in, please try again.'
+        echom 'Augment: Error signing in: ' . a:err.message
         echohl None
         call augment#log#Error('augment/token response error: ' . string(a:err))
         return
@@ -157,7 +181,7 @@ function! s:HandleStatus(client, params, result, err) abort
     endif
 
     let loggedIn = a:result.loggedIn
-    let enabled = exists('g:augment_enabled') ? g:augment_enabled : v:true
+    let disabled = exists('g:augment_disable_completions') && g:augment_disable_completions
     if has_key(a:result, 'syncPercentage')
         let syncPercentage = a:result.syncPercentage == 100 ? 'fully' : printf('%d%%', a:result.syncPercentage)
         let syncText = printf(' (workspace %s synced)', syncPercentage)
@@ -167,16 +191,20 @@ function! s:HandleStatus(client, params, result, err) abort
 
     if !loggedIn
         echom 'Augment: Not signed in. Run ":Augment signin" to start the sign in flow or ":h augment" for more information on the plugin.'
-    elseif !enabled
-        echom printf('Augment%s: Signed in, disabled.', syncText)
+    elseif disabled
+        echom printf('Augment%s: Signed in, completions disabled.', syncText)
     else
-        echom printf('Augment%s: Signed in, enabled.', syncText)
+        echom printf('Augment%s: Signed in.', syncText)
     endif
 endfunction
 
 " Handle the augment/chat response
 function! s:HandleChat(client, params, result, err) abort
     if a:err isnot v:null
+        " NOTE(mpauly): For chat we want to show the error to the user even if
+        " they're not logged in. This helps disambiguate between a
+        " network/slow response error and an authentication error.
+
         call augment#log#Error('augment/chat response error: ' . string(a:err))
         return
     endif
@@ -290,13 +318,27 @@ function! s:GetWorkspaceFolders() abort
         return []
     endif
 
+    " Validate the the workspace folders are a list
+    if type(g:augment_workspace_folders) == v:t_list
+        let folders_list = g:augment_workspace_folders
+    elseif type(g:augment_workspace_folders) == v:t_string
+        let folders_list = [g:augment_workspace_folders]
+    else
+        call augment#log#Error('Workspace folders set to invalid value: ' . string(g:augment_workspace_folders) . '. See `:h g:augment_workspace_folders` for configuration instructions.')
+        return []
+    endif
+
     let valid_folders = []
-    for folder in g:augment_workspace_folders
-        let abs_path = fnamemodify(folder, ':p')
-        if !isdirectory(abs_path)
-            call augment#log#Error('The following workspace folder does not exist: ' . abs_path)
+    for folder in folders_list
+        if type(folder) != v:t_string
+            call augment#log#Error('Expected workspace folder type to be string. Got: ' . string(folder))
         else
-            call add(valid_folders, folder)
+            let abs_path = fnamemodify(folder, ':p')
+            if !isdirectory(abs_path)
+                call augment#log#Error('The following workspace folder does not exist: ' . abs_path)
+            else
+                call add(valid_folders, folder)
+            endif
         endif
     endfor
 
@@ -324,6 +366,7 @@ function! s:New() abort
     " Set the message handlers
     let notification_handlers = {
                 \ 'augment/chatChunk': function('s:HandleChatChunk'),
+                \ 'window/logMessage': function('s:HandleLogMessage'),
                 \ }
     let response_handlers = {
                 \ 'initialize': function('s:HandleInitialize'),
@@ -342,17 +385,11 @@ function! s:New() abort
                 \ 'response_handlers': response_handlers,
                 \ }
 
-
-    " Check that the runtime environment is installed. If not, return a partially initialized client
-    if executable(s:job_command[0]) == 0
-        call augment#log#Error('The Augment runtime (' . s:job_command[0] . ') was not found. If node is available on your system under a different name, you can set the `g:augment_node_command` variable. See `:help g:augment_node_command` for more details.')
-        return client
-    endif
-
     " Convert any workspace folders to URIs for the language server
     let workspace_folders = s:GetWorkspaceFolders()
 
     " Start the server and send the initialize request
+    let job_command = augment#client#GetJobCommand()
     if has('nvim')
         " Nvim-specific client setup
         call extend(client, {
@@ -365,7 +402,7 @@ function! s:New() abort
 
         " If the client exits, lua will notify NvimOnExit()
         let client.client_id = luaeval('require("augment").start_client(_A[1], _A[2], _A[3])',
-                    \ [s:job_command, notification_methods, workspace_folders])
+                    \ [job_command, notification_methods, workspace_folders])
     else
         " Vim-specific client setup
         call extend(client, {
@@ -375,7 +412,7 @@ function! s:New() abort
                     \ 'Request': function('s:VimRequest'),
                     \ })
 
-        let client.job = job_start(s:job_command, {
+        let client.job = job_start(job_command, {
                     \ 'noblock': 1,
                     \ 'stoponexit': 'term',
                     \ 'in_mode': 'lsp',
