@@ -287,15 +287,27 @@ function! augment#OnVimEnter() abort
 endfunction
 
 function! augment#OnBufEnter() abort
+    if getcmdwintype() != ''
+        return
+    endif
+
     call s:OpenBuffer()
     call augment#chat#SaveUri()
 endfunction
 
 function! augment#OnTextChanged() abort
+    if getcmdwintype() != ''
+        return
+    endif
+
     call s:UpdateBuffer()
 endfunction
 
 function! augment#OnTextChangedI() abort
+    if getcmdwintype() != ''
+        return
+    endif
+
     " Since CursorMovedI is always called before TextChangedI, the suggestion will already be cleared
     call s:UpdateBuffer()
     call s:RequestCompletion()
@@ -306,6 +318,10 @@ function! augment#OnCursorMovedI() abort
 endfunction
 
 function! augment#OnInsertEnter() abort
+    if getcmdwintype() != ''
+        return
+    endif
+
     call s:UpdateBuffer()
     call s:RequestCompletion()
 endfunction
